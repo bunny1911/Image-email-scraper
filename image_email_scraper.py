@@ -23,13 +23,14 @@ import pytesseract
 from pathlib import Path
 from io import BytesIO
 from urllib.parse import urlparse
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Supported image formats
-VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
+VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
 
 # Ser email regex
 EMAIL_REGEX = r'[\w.+-]+@[\w-]+\.[\w.-]+'
@@ -143,7 +144,6 @@ def get_image_data(source: str) -> BytesIO:
 
     except Exception as error:
         # Error
-        logging.error(f"Failed to retrieve image from {source}: {error}")
         raise RuntimeError(f"Failed to retrieve image from {source}: {error}")
 
     else:
@@ -153,7 +153,7 @@ def get_image_data(source: str) -> BytesIO:
 
 def extract_emails_from_image(image_data: BytesIO) -> list[str]:
     """
-    Extract unique email addresses from an image using OCR.
+    Extract unique email addresses from an image using OCR with preprocessing.
 
     Args:
         image_data (BytesIO): A binary stream containing the image data.
@@ -164,13 +164,26 @@ def extract_emails_from_image(image_data: BytesIO) -> list[str]:
     Raises:
         RuntimeError: If an error occurs while processing the image.
     """
-
     try:
         # Open the image
         image = Image.open(image_data)
 
-        # Perform OCR to extract text
-        text = pytesseract.image_to_string(image)
+        # Convert to grayscale
+        image = image.convert("L")
+
+        # Increase contrast
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(2.0)
+
+        # Apply edge enhancement
+        image = image.filter(ImageFilter.EDGE_ENHANCE)
+
+        # Convert image to binary (black & white) to improve text clarity
+        image = image.point(lambda x: 0 if x < 128 else 255, "1")
+
+        # Perform OCR with additional configuration
+        custom_config = "--oem 3 --psm 6"  # OCR Engine Mode 3, Page Segmentation Mode 6
+        text = pytesseract.image_to_string(image, config=custom_config)
 
         # Extract email addresses from recognized text
         emails = list(set(re.findall(EMAIL_REGEX, text)))
@@ -226,7 +239,7 @@ def main() -> None:
 
     except RuntimeError as error:
         # Error
-        logging.error(f"Failed to process image: {error}")
+        logging.error(str(error))
 
 
 if __name__ == "__main__":
