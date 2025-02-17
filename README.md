@@ -68,7 +68,7 @@ Run the script and enter an image URL or a local image file path when prompted:
 ```bash
 python script.py
 ```
-Then enter:
+Then enter first parameter:
 ```
 Enter the URL or file path of the image: /path/to/image.jpg
 ```
@@ -76,7 +76,11 @@ Or for a remote file:
 ```
 Enter the URL or file path of the image: https://example.com/image.png
 ```
+Then enter first parameter:
 
+```
+Enter the file path to save the extracted emails: result.txt
+```
 ---
 
 ## 🔹 Example Output

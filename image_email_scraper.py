@@ -35,6 +35,44 @@ VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
 EMAIL_REGEX = r'[\w.+-]+@[\w-]+\.[\w.-]+'
 
 
+def save_emails_to_file(
+        emails: list[str],
+        output_path: str
+) -> None:
+    """
+    Saves extracted email addresses to a text file.
+
+    Args:
+        emails (list[str]): A list of extracted email addresses.
+        output_path (str): The file path where emails should be saved.
+
+    Raises:
+        RuntimeError: If an error occurs while writing to the file.
+    """
+
+    try:
+        # Get Path object
+        output_file = Path(output_path)
+
+        # Create directories if needed
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if not output_file.exists():
+            # Log file creation
+            logging.info(f"File '{output_file.resolve()}' not found. Creating new file.")
+            output_file.touch()
+
+        # Write emails to file
+        with open(output_file, "w", encoding="utf-8") as file:
+            # Save to file
+            file.write("\n".join(emails))
+
+    except Exception as error:
+        # Error
+        logging.error(f"Error saving emails to file: {error}")
+        raise RuntimeError(f"Error saving emails to file: {error}")
+
+
 def is_valid_image(source: str) -> bool:
     """
     Validates if the provided source corresponds to a supported image format.
@@ -151,7 +189,7 @@ def extract_emails_from_image(image_data: BytesIO) -> list[str]:
 
 def main() -> None:
     """
-    Main function to extract and display email addresses from an image.
+    Main function to extract and save email addresses from an image.
 
     Raises:
         RuntimeError: If an error occurs while retrieving or processing the image.
@@ -159,11 +197,11 @@ def main() -> None:
 
     # Get input from user
     source = input("Enter the URL or file path of the image: ").strip()
+    output_path = input("Enter the file path to save the extracted emails: ").strip()
 
-    if not source:
-        # Nof found source
-        logging.error("No input provided.")
-        print("Error: No input provided.")
+    if not source or not output_path:
+        # Not found parameters
+        logging.error("Missing required input.")
         return
 
     try:
@@ -175,16 +213,20 @@ def main() -> None:
 
         if emails:
             # Found emails
-            print("Extracted email(s):")
-            print("\n".join(emails))
+            output_file = Path(output_path)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Save emails to file
+            save_emails_to_file(emails, output_path)
+            logging.info(f"Extraction complete. Emails saved to {output_file.resolve()}")
 
         else:
             # Not found emails
-            print("No emails found in the image.")
+            logging.info("No emails found.")
 
     except RuntimeError as error:
-        # Print error
-        print(f"Error: {error}")
+        # Error
+        logging.error(f"Failed to process image: {error}")
 
 
 if __name__ == "__main__":
