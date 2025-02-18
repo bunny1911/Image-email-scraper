@@ -16,76 +16,43 @@ Usage:
     Run the script and enter an image URL or file path when prompted.
 """
 
-import re
-import requests
 import logging
-import pytesseract
-from pathlib import Path
+import re
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import urlparse
-from PIL import Image, ImageEnhance, ImageFilter
+
+import pytesseract
+import requests
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+VALID_IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
+EMAIL_REGEX = r"[\w.+-]+@[\w-]+\.[\w.-]+"
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Supported image formats
-VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
-
-# Ser email regex
-EMAIL_REGEX = r'[\w.+-]+@[\w-]+\.[\w.-]+'
-
-
-def save_emails_to_file(
-        emails: list[str],
-        output_path: str
-) -> None:
+def save_emails_to_file(emails: list[str], output_path: str) -> None:
     """
-    Saves extracted email addresses to a text file.
-
-    Args:
-        emails (list[str]): A list of extracted email addresses.
-        output_path (str): The file path where emails should be saved.
-
-    Raises:
-        RuntimeError: If an error occurs while writing to the file.
+    Saves extracted email addresses to a file.
     """
 
-    try:
-        # Get Path object
-        output_file = Path(output_path)
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create directories if needed
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as file:
+        file.write("\n".join(emails))
 
-        if not output_file.exists():
-            # Log file creation
-            logging.info(f"File '{output_file.resolve()}' not found. Creating new file.")
-            output_file.touch()
-
-        # Write emails to file
-        with open(output_file, "w", encoding="utf-8") as file:
-            # Save to file
-            file.write("\n".join(emails))
-
-    except Exception as error:
-        # Error
-        logging.error(f"Error saving emails to file: {error}")
-        raise RuntimeError(f"Error saving emails to file: {error}")
+    logging.info(f"Emails saved to {output_file.resolve()}")
 
 
 def is_valid_image(source: str) -> bool:
     """
-    Validates if the provided source corresponds to a supported image format.
-
-    Args:
-        source (str): A file path or URL pointing to an image.
-
-    Returns:
-        bool: True if the file has a valid image extension, False otherwise.
+    Checks if the provided path or URL is a valid image file.
     """
 
-    # Defined parse url
     parsed_url = urlparse(source)
 
     if parsed_url.scheme:
@@ -96,149 +63,80 @@ def is_valid_image(source: str) -> bool:
         # It's a file
         file_extension = Path(source).suffix.lower()
 
-    return file_extension in VALID_IMAGE_EXTENSIONS
+    return file_extension in VALID_IMAGE_TYPES
 
 
 def get_image_data(source: str) -> BytesIO:
     """
-    Retrieve image data from a local file or a URL.
-
-    Args:
-        source (str): A file path or URL pointing to an image.
-
-    Returns:
-        BytesIO: A binary stream containing the image data.
-
-    Raises:
-        ValueError: If the source is not a valid image file.
-        RuntimeError: If an error occurs while retrieving the image.
+    Retrieves image data from a local file or URL.
     """
 
-    try:
+    if not is_valid_image(source):
+        raise ValueError("Invalid file type. Provide a valid image file.")
 
-        if source.startswith("http://") or source.startswith("https://"):
-            # Source is a URL
-            logging.info(f"Downloading image from URL: {source}")
+    if source.startswith(("http://", "https://")):
+        response = requests.get(source, stream=True)
+        response.raise_for_status()
+        return BytesIO(response.content)
 
-            # Validate image format
-            if not is_valid_image(source):
-                # Not valid image type
-                raise ValueError("Invalid file type. Please provide a valid image file URL.")
+    return BytesIO(Path(source).read_bytes())
 
-            # Download image
-            response = requests.get(source, stream=True)
-            response.raise_for_status()
-            image = BytesIO(response.content)
 
-        else:
-            # Source is a local file
-            logging.info(f"Loading image from file: {source}")
+def preprocess_image(image: Image.Image) -> Image.Image:
+    """
+    Preprocesses the image to improve text recognition.
+    """
 
-            # Validate image format
-            if not is_valid_image(source):
-                # Not valid image type
-                raise ValueError("Invalid file type. Please provide a valid image file.")
+    image = image.convert("L")  # Grayscale
+    image = ImageEnhance.Contrast(image).enhance(2.0)  # Increase contrast
 
-            # Read image from file
-            image = BytesIO(Path(source).read_bytes())
+    # Apply blur if the image has noise
+    image = image.filter(ImageFilter.GaussianBlur(1))
 
-    except Exception as error:
-        # Error
-        raise RuntimeError(f"Failed to retrieve image from {source}: {error}")
-
-    else:
-        # All success
-        return image
+    # Convert to binary (B/W)
+    return ImageOps.autocontrast(image)
 
 
 def extract_emails_from_image(image_data: BytesIO) -> list[str]:
     """
-    Extract unique email addresses from an image using OCR with preprocessing.
-
-    Args:
-        image_data (BytesIO): A binary stream containing the image data.
-
-    Returns:
-        list[str]: A list of unique email addresses found in the image.
-
-    Raises:
-        RuntimeError: If an error occurs while processing the image.
+    Extracts unique email addresses from an image.
     """
+
     try:
-        # Open the image
         image = Image.open(image_data)
-
-        # Convert to grayscale
-        image = image.convert("L")
-
-        # Increase contrast
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(2.0)
-
-        # Apply edge enhancement
-        image = image.filter(ImageFilter.EDGE_ENHANCE)
-
-        # Convert image to binary (black & white) to improve text clarity
-        image = image.point(lambda x: 0 if x < 128 else 255, "1")
-
-        # Perform OCR with additional configuration
-        custom_config = "--oem 3 --psm 6"  # OCR Engine Mode 3, Page Segmentation Mode 6
-        text = pytesseract.image_to_string(image, config=custom_config)
-
-        # Extract email addresses from recognized text
+        image = preprocess_image(image)
+        text = pytesseract.image_to_string(image, config="--oem 3 --psm 6")
         emails = list(set(re.findall(EMAIL_REGEX, text)))
 
-        # Log extracted emails
-        logging.info(f"Extracted {len(emails)} email(s) from the image.")
+        logging.info(f"Extracted {len(emails)} email(s).")
+        return emails
 
     except Exception as error:
-        logging.error(f"Failed to process image: {error}")
-        raise RuntimeError(f"Failed to process image: {error}")
-
-    else:
-        # All success
-        return emails
+        raise RuntimeError(f"Failed to process image: {error}") from error
 
 
 def main() -> None:
     """
-    Main function to extract and save email addresses from an image.
-
-    Raises:
-        RuntimeError: If an error occurs while retrieving or processing the image.
+    Main function to extract and save email addresses.
     """
 
-    # Get input from user
     source = input("Enter the URL or file path of the image: ").strip()
     output_path = input("Enter the file path to save the extracted emails: ").strip()
 
     if not source or not output_path:
-        # Not found parameters
-        logging.error("Missing required input.")
+        logging.error("Missing input.")
         return
 
     try:
-        # Retrieve image data
-        image_data = get_image_data(source)
-
-        # Extract emails from the image
-        emails = extract_emails_from_image(image_data)
+        emails = extract_emails_from_image(get_image_data(source))
 
         if emails:
-            # Found emails
-            output_file = Path(output_path)
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-
-            # Save emails to file
             save_emails_to_file(emails, output_path)
-            logging.info(f"Extraction complete. Emails saved to {output_file.resolve()}")
 
         else:
-            # Not found emails
             logging.info("No emails found.")
 
     except RuntimeError as error:
-        # Error
         logging.error(str(error))
 
 
