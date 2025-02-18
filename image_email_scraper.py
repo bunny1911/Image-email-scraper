@@ -132,7 +132,6 @@ def main() -> None:
 
         if emails:
             save_emails_to_file(emails, output_path)
-
         else:
             logging.info("No emails found.")
 
